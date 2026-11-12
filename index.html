@@ -80,6 +80,27 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
 .take span:last-child{color:var(--muted);font:500 13px var(--ui);white-space:nowrap;font-variant-numeric:tabular-nums}
 .note{color:var(--muted);font-size:14px;line-height:1.45;margin:0;padding-block:12px 16px}
 @media (min-width:700px){#words{font-size:44px}}
+/* Phone on its side: settings move beside the script, and the prompter controls become a slim rail so the text keeps the full height. */
+@media (orientation:landscape) and (max-height:540px){
+  #edit,#review{display:grid;grid-template:auto minmax(0,1fr)/minmax(0,1fr) minmax(230px,300px);column-gap:14px;max-width:none}
+  #edit .top,#review .top{grid-column:1/-1;padding-block:8px 6px}
+  #edit .sheet,#review .player{min-height:0;padding-bottom:10px}
+  #edit .dock,#review .dock{overflow-y:auto;padding-block:0 10px;gap:10px}
+  .row{grid-template-columns:52px 1fr 62px;gap:8px}
+  #prompt{flex-direction:row}
+  #controls{flex:none;border-top:0;border-left:1px solid var(--line);justify-content:center;gap:6px;padding:6px max(8px,env(safe-area-inset-right,0px)) 6px 8px}
+  #controls .line{width:116px}
+  #controls .line:first-child{flex-direction:column;gap:6px}
+  #controls .line:last-child{flex-wrap:wrap;justify-content:space-between;gap:6px 5px}
+  .step{width:100%;flex:none}
+  .step button{width:30px;height:38px}
+  .step span{font-size:13px}
+  .ib{width:35px;height:38px}
+  #time{flex:none;width:100%}
+  #rec,#play{width:100%;height:40px}
+  .pad{padding-top:38cqh;padding-bottom:62cqh}
+  #guide{top:38cqh}
+}
 </style>
 
 <section id="edit" class="view gutter">
