@@ -1,0 +1,333 @@
+<title>Pocket Teleprompter</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: one-screen app. Edit view = script sheet over a settings dock.
+   Prompt view = full-bleed scrolling stage with the reading line parked high (near the lens), controls docked at the thumb. */
+:root{
+  color-scheme:dark;              /* single dark look by choice: a dark screen throws less light on the face while filming */
+  --bg:#0a0e16; --panel:#131a26; --raise:#1c2535; --line:#2a3548;
+  --fg:#f3f5f9; --muted:#8e9aae;
+  --cue:#ffb627;                  /* amber cue light */
+  --rec:#ff4b4b;                  /* tally red */
+  --read:"Atkinson Hyperlegible",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --ui:"Space Grotesk","Atkinson Hyperlegible",system-ui,sans-serif;
+}
+html{height:100%;box-sizing:border-box}
+*,*::before,*::after{box-sizing:inherit}
+body{height:100%;background:var(--bg);color:var(--fg);font-family:var(--read);font-size:16px;display:flex;flex-direction:column;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+:focus-visible{outline:2px solid var(--cue);outline-offset:2px}
+.gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+/* ---------- Edit view ---------- */
+#edit{flex:1;min-height:0;display:flex;flex-direction:column;width:100%;max-width:760px;margin:0 auto}
+.top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-block:14px 10px}
+h1{font-family:var(--ui);font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}
+h1 i{font-style:normal;color:var(--cue)}
+.stats{font-family:var(--ui);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.sheet{flex:1;min-height:120px;display:flex;padding-block:0}
+#script{flex:1;min-width:0;resize:none;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:16px;font:400 18px/1.5 var(--read)}
+#script::placeholder{color:var(--muted)}
+#script:focus{outline:none;border-color:var(--cue)}
+.dock{display:flex;flex-direction:column;gap:14px;padding-block:14px 16px}
+.row{display:grid;grid-template-columns:76px 1fr 72px;align-items:center;gap:12px}
+.row label{font-family:var(--ui);font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.row output{font-family:var(--ui);font-size:14px;text-align:right;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
+.toggles{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font-family:var(--ui);font-size:14px;padding:9px 14px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+.chip[aria-pressed=true]{border-color:var(--cue);color:var(--cue)}
+.chip.ghost{margin-left:auto}
+#start{font-family:var(--ui);font-weight:700;font-size:17px;background:var(--cue);color:#1a1200;border-radius:10px;padding:15px}
+#start:active{filter:brightness(.9)}
+
+/* ---------- Prompt view ---------- */
+#prompt{flex:1;min-height:0;display:flex;flex-direction:column}
+#stage{position:relative;flex:1;min-height:0;overflow:hidden;container-type:size;background:#000}
+#cam{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#scroller{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+#scroller::-webkit-scrollbar{display:none}
+.pad{padding-top:26cqh;padding-bottom:74cqh}
+#words{white-space:pre-wrap;overflow-wrap:break-word;font:700 34px/1.38 var(--read);max-width:900px;margin:0 auto}
+#words.mirror{transform:scaleX(-1)}
+#stage.film #words{text-shadow:0 0 6px #000,0 2px 14px #000}
+#stage.film #scroller{background:linear-gradient(#000a 0,#0008 45%,#0003 100%)}
+#guide{position:absolute;left:0;right:0;top:26cqh;height:1.38em;pointer-events:none;border-top:1px solid color-mix(in srgb,var(--cue) 45%,transparent);border-bottom:1px solid color-mix(in srgb,var(--cue) 45%,transparent);background:color-mix(in srgb,var(--cue) 7%,transparent)}
+#guide::before{content:"";position:absolute;left:0;top:50%;translate:0 -50%;border:7px solid transparent;border-left-color:var(--cue)}
+#bar{position:absolute;left:0;top:0;height:3px;width:0;background:var(--cue);z-index:2}
+#count{position:absolute;inset:0;display:grid;place-items:center;background:#000b;font:700 120px/1 var(--ui);color:var(--cue);z-index:3}
+#recdot{position:absolute;top:12px;right:max(14px,env(safe-area-inset-right,0px));z-index:2;font:700 13px var(--ui);color:#fff;background:var(--rec);padding:4px 9px;border-radius:4px;letter-spacing:.08em}
+#controls{background:var(--panel);border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px;padding-block:8px 10px}
+.line{display:flex;align-items:center;gap:6px}
+.step{flex:1;min-width:0;display:flex;align-items:center;background:var(--raise);border-radius:10px}
+.step button{width:46px;height:42px;font:500 22px var(--ui);flex:none}
+.step span{flex:1;min-width:0;text-align:center;font:500 14px var(--ui);font-variant-numeric:tabular-nums;white-space:nowrap}
+.ib{width:42px;height:46px;border-radius:10px;background:var(--raise);font:500 19px var(--ui);flex:none;display:grid;place-items:center}
+.ib[aria-pressed=true]{color:var(--cue)}
+#rec{color:var(--rec)}
+#rec.on{background:var(--rec);color:#fff}
+#time{flex:1;min-width:0;text-align:center;font:500 15px var(--ui);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+#play{flex:none;width:76px;height:46px;border-radius:10px;background:var(--cue);color:#1a1200;font:700 15px var(--ui)}
+#toast{position:fixed;left:50%;translate:-50% 0;bottom:calc(140px + env(safe-area-inset-bottom,0px));max-width:min(88vw,420px);background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:8px;font-size:14px;z-index:9;text-align:center}
+#saved{position:fixed;inset:0;background:#000c;z-index:8;display:grid;place-items:center;padding:16px}
+#saved div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px;width:min(100%,340px)}
+#saved p{margin:0;color:var(--muted);font-size:15px}
+#saved button{padding:13px;border-radius:10px;font:700 15px var(--ui);background:var(--raise)}
+#saved #save{background:var(--cue);color:#1a1200}
+@media (min-width:700px){#words{font-size:44px}}
+</style>
+
+<section id="edit" class="gutter">
+  <div class="top">
+    <h1>Pocket <i>Teleprompter</i></h1>
+    <div class="stats" id="stats" aria-live="polite"></div>
+  </div>
+  <div class="sheet">
+    <textarea id="script" aria-label="Your script" placeholder="Paste or type your script here"></textarea>
+  </div>
+  <div class="dock">
+    <div class="row"><label for="wpm">Speed</label><input id="wpm" type="range" min="60" max="260" step="5"><output id="wpmOut" for="wpm"></output></div>
+    <div class="row"><label for="size">Text</label><input id="size" type="range" min="20" max="80" step="2"><output id="sizeOut" for="size"></output></div>
+    <div class="toggles">
+      <button class="chip" id="tCount" aria-pressed="true">3s countdown</button>
+      <button class="chip" id="tMirror" aria-pressed="false">Mirror text</button>
+      <button class="chip ghost" id="clear">Clear</button>
+    </div>
+    <button id="start">Start prompter</button>
+  </div>
+</section>
+
+<section id="prompt" hidden>
+  <div id="stage">
+    <video id="cam" playsinline muted autoplay hidden></video>
+    <div id="scroller"><div class="pad gutter"><div id="words"></div></div></div>
+    <div id="guide"></div>
+    <div id="bar"></div>
+    <div id="recdot" hidden>REC</div>
+    <div id="count" hidden></div>
+  </div>
+  <div id="controls" class="gutter">
+    <div class="line">
+      <div class="step"><button id="slower" aria-label="Slower">−</button><span id="wpmLive"></span><button id="faster" aria-label="Faster">+</button></div>
+      <div class="step"><button id="smaller" aria-label="Smaller text">−</button><span id="sizeLive"></span><button id="larger" aria-label="Larger text">+</button></div>
+    </div>
+    <div class="line">
+      <button class="ib" id="back" aria-label="Back to script">←</button>
+      <button class="ib" id="restart" aria-label="Back to the top">↺</button>
+      <button class="ib" id="camBtn" aria-label="Camera" aria-pressed="false" hidden>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10l6-3v10l-6-3z"/></svg>
+      </button>
+      <button class="ib" id="rec" aria-label="Record" hidden>●</button>
+      <span id="time"></span>
+      <button id="play">Play</button>
+    </div>
+  </div>
+</section>
+<div id="toast" hidden role="status"></div>
+<div id="saved" hidden><div>
+  <p id="savedMsg"></p>
+  <button id="save">Save video</button>
+  <button id="discard">Discard</button>
+</div></div>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const SAMPLE = `Sample script. Replace this with your own.
+
+Hey, it's me. Today I'm going to show you the one change that made my videos easier to film.
+
+I stopped memorising lines.
+
+Instead, I write the script the way I talk, keep the sentences short, and read it right next to the lens.
+
+Leave a blank line wherever you want to breathe.
+
+Set the speed to match your natural pace. Most people talk at about 150 words a minute.
+
+That's it. Hit record, and I'll see you in the next one.`;
+
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem('tp.'+k); return v === null ? d : JSON.parse(v) }catch{ return d } },
+  set(k, v){ try{ localStorage.setItem('tp.'+k, JSON.stringify(v)) }catch{} }
+};
+const S = {
+  script: store.get('script', SAMPLE),
+  wpm: store.get('wpm', 150),
+  size: store.get('size', 34),
+  count: store.get('count', true),
+  mirror: store.get('mirror', false)
+};
+
+const script = $('script'), words = $('words'), sc = $('scroller'), stage = $('stage');
+const fmt = s => { s = Math.max(0, Math.round(s)); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0') };
+const wordCount = () => (S.script.trim().match(/\S+/g) || []).length;
+
+function paintEdit(){
+  $('wpm').value = S.wpm; $('wpmOut').textContent = S.wpm + ' wpm';
+  $('size').value = S.size; $('sizeOut').textContent = S.size + ' px';
+  $('tCount').setAttribute('aria-pressed', S.count);
+  $('tMirror').setAttribute('aria-pressed', S.mirror);
+  const n = wordCount();
+  $('stats').textContent = n ? `${n} words · about ${fmt(n / S.wpm * 60)}` : 'No script yet';
+}
+function paintLive(){
+  $('wpmLive').textContent = S.wpm + ' wpm';
+  $('sizeLive').textContent = 'Text ' + S.size;
+  words.style.fontSize = S.size + 'px';
+  $('guide').style.fontSize = S.size + 'px';
+  words.classList.toggle('mirror', S.mirror);
+  status();
+}
+function set(k, v){ S[k] = v; store.set(k, v); paintEdit(); paintLive() }
+
+script.value = S.script;
+script.addEventListener('input', () => set('script', script.value));
+$('wpm').addEventListener('input', e => set('wpm', +e.target.value));
+$('size').addEventListener('input', e => set('size', +e.target.value));
+$('tCount').onclick = () => set('count', !S.count);
+$('tMirror').onclick = () => set('mirror', !S.mirror);
+let clearArmed = 0;
+$('clear').onclick = e => {
+  if (Date.now() - clearArmed < 3000){ script.value = ''; set('script', ''); e.target.textContent = 'Clear'; clearArmed = 0; script.focus() }
+  else { clearArmed = Date.now(); e.target.textContent = 'Tap again to clear'; setTimeout(() => { e.target.textContent = 'Clear' }, 3000) }
+};
+
+/* ---------- Prompter ---------- */
+let playing = false, pos = 0, last = 0, lock = null, countTimer = null;
+const maxScroll = () => Math.max(0, sc.scrollHeight - sc.clientHeight);
+// Scroll speed comes from reading pace: the whole text passes the cue line in (words / wpm) minutes.
+const pxPerSec = () => { const n = wordCount(); return n ? words.offsetHeight * S.wpm / (n * 60) : 0 };
+
+function status(){
+  const max = maxScroll(), v = pxPerSec();
+  const p = max ? Math.min(1, sc.scrollTop / max) : 0;
+  $('bar').style.width = (p * 100) + '%';
+  $('time').textContent = v ? fmt((max - sc.scrollTop) / v) + ' left' : '';
+}
+function tick(t){
+  if (!playing) return;
+  const dt = Math.min((t - last) / 1000, .1); last = t;
+  if (Math.abs(sc.scrollTop - pos) > 3) pos = sc.scrollTop;   // the reader dragged the text
+  pos += pxPerSec() * dt;
+  const max = maxScroll();
+  if (pos >= max){ sc.scrollTop = max; pause(); status(); return }
+  sc.scrollTop = pos; status();
+  requestAnimationFrame(tick);
+}
+async function wake(on){
+  try{
+    if (on && !lock && navigator.wakeLock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', () => { lock = null }) }
+    else if (!on && lock) { await lock.release(); lock = null }
+  }catch{}
+}
+function run(){ playing = true; pos = sc.scrollTop; last = performance.now(); $('play').textContent = 'Pause'; wake(true); requestAnimationFrame(tick) }
+function play(){
+  if (playing || countTimer) return;
+  if (sc.scrollTop >= maxScroll() - 1) sc.scrollTop = 0;
+  if (!S.count) return run();
+  let n = 3; const c = $('count'); c.textContent = n; c.hidden = false; $('play').textContent = 'Cancel';
+  countTimer = setInterval(() => {
+    if (--n > 0) { c.textContent = n; return }
+    clearInterval(countTimer); countTimer = null; c.hidden = true; run();
+  }, 1000);
+}
+function pause(){
+  if (countTimer){ clearInterval(countTimer); countTimer = null; $('count').hidden = true }
+  playing = false; $('play').textContent = 'Play'; wake(false);
+}
+const toggle = () => (playing || countTimer) ? pause() : play();
+
+$('start').onclick = () => {
+  if (!wordCount()) { toast('Add a script first.'); return }
+  words.textContent = S.script.trim();
+  $('edit').hidden = true; $('prompt').hidden = false;
+  paintLive(); sc.scrollTop = 0; status();
+};
+$('back').onclick = () => { pause(); camOff(); $('prompt').hidden = true; $('edit').hidden = false };
+$('restart').onclick = () => { pause(); sc.scrollTop = 0; status() };
+$('play').onclick = toggle;
+$('count').onclick = pause;
+// A tap on the text toggles play; a drag just repositions it.
+let downY = null;
+sc.addEventListener('pointerdown', e => { downY = e.clientY });
+sc.addEventListener('pointerup', e => { if (downY !== null && Math.abs(e.clientY - downY) < 8) toggle(); downY = null });
+sc.addEventListener('scroll', () => { if (!playing) status() }, {passive:true});
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+$('slower').onclick = () => set('wpm', clamp(S.wpm - 5, 60, 260));
+$('faster').onclick = () => set('wpm', clamp(S.wpm + 5, 60, 260));
+function resize(d){
+  const max = maxScroll(), p = max ? sc.scrollTop / max : 0;
+  set('size', clamp(S.size + d, 20, 80));
+  sc.scrollTop = pos = p * maxScroll(); status();          // keep your place when the text reflows
+}
+$('smaller').onclick = () => resize(-2);
+$('larger').onclick = () => resize(2);
+addEventListener('resize', status);
+document.addEventListener('visibilitychange', () => { if (document.hidden) pause() });
+addEventListener('keydown', e => {
+  if ($('prompt').hidden) return;
+  if (e.code === 'Space') { e.preventDefault(); toggle() }
+  else if (e.key === 'ArrowUp') $('faster').click();
+  else if (e.key === 'ArrowDown') $('slower').click();
+  else if (e.key === 'Escape') $('back').click();
+});
+
+let toastTimer;
+function toast(msg){ const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true }, 3500) }
+
+/* ---------- Camera + recording (only in the self-hosted copy, where the browser allows the camera) ---------- */
+const cam = $('cam'); let stream = null, recorder = null, chunks = [], clip = null;
+const canFilm = !!(window.TP_STANDALONE && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+$('camBtn').hidden = !canFilm;
+async function camOn(){
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:{ideal:1920}, height:{ideal:1080}}, audio:true});
+    cam.srcObject = stream; cam.hidden = false; stage.classList.add('film');
+    $('camBtn').setAttribute('aria-pressed', 'true'); $('rec').hidden = false;
+  }catch(err){
+    toast(err && err.name === 'NotAllowedError' ? 'Camera access was blocked. Allow camera and microphone for this site in your browser settings.' : 'No camera found on this device.');
+  }
+}
+function camOff(){
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; cam.srcObject = null; cam.hidden = true; stage.classList.remove('film');
+  $('camBtn').setAttribute('aria-pressed', 'false'); $('rec').hidden = true;
+}
+$('camBtn').onclick = () => stream ? camOff() : camOn();
+$('rec').onclick = () => {
+  if (recorder && recorder.state !== 'inactive') { recorder.stop(); pause(); return }
+  const type = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  try{ recorder = new MediaRecorder(stream, type ? {mimeType:type} : {}) }catch{ toast('This browser cannot record video.'); return }
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data) };
+  recorder.onstop = () => {
+    $('rec').classList.remove('on'); $('recdot').hidden = true;
+    const mime = recorder.mimeType || type || 'video/webm';
+    const blob = new Blob(chunks, {type:mime});
+    if (!blob.size) return;
+    const name = 'take-' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + (mime.includes('mp4') ? '.mp4' : '.webm');
+    clip = {blob, name, mime};
+    $('savedMsg').textContent = `Take recorded (${(blob.size / 1048576).toFixed(1)} MB).`;
+    $('saved').hidden = false;
+  };
+  recorder.start(1000);
+  $('rec').classList.add('on'); $('recdot').hidden = false;
+  play();
+};
+$('save').onclick = async () => {
+  if (!clip) return;
+  const file = new File([clip.blob], clip.name, {type:clip.mime.split(';')[0]});
+  try{
+    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file]}); }
+    else { const a = document.createElement('a'); a.href = URL.createObjectURL(clip.blob); a.download = clip.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000) }
+    $('saved').hidden = true; clip = null;
+  }catch(err){ if (!err || err.name !== 'AbortError') toast('Could not save the video. Try again.') }
+};
+$('discard').onclick = () => { $('saved').hidden = true; clip = null };
+
+paintEdit(); paintLive();
+})();
+</script>
