@@ -21,7 +21,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webki
 .gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 
 /* ---------- Edit view ---------- */
-#edit{flex:1;min-height:0;display:flex;flex-direction:column;width:100%;max-width:760px;margin:0 auto}
+.view{flex:1;min-height:0;display:flex;flex-direction:column;width:100%;max-width:760px;margin:0 auto}
 .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-block:14px 10px}
 h1{font-family:var(--ui);font-size:20px;font-weight:700;margin:0;letter-spacing:-.01em}
 h1 i{font-style:normal;color:var(--cue)}
@@ -39,7 +39,7 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
 .chip{font-family:var(--ui);font-size:14px;padding:9px 14px;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
 .chip[aria-pressed=true]{border-color:var(--cue);color:var(--cue)}
 .chip.ghost{margin-left:auto}
-#start{font-family:var(--ui);font-weight:700;font-size:17px;background:var(--cue);color:#1a1200;border-radius:10px;padding:15px}
+#start,#save{font-family:var(--ui);font-weight:700;font-size:17px;background:var(--cue);color:#1a1200;border-radius:10px;padding:15px}
 #start:active{filter:brightness(.9)}
 
 /* ---------- Prompt view ---------- */
@@ -65,20 +65,22 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
 .step span{flex:1;min-width:0;text-align:center;font:500 14px var(--ui);font-variant-numeric:tabular-nums;white-space:nowrap}
 .ib{width:42px;height:46px;border-radius:10px;background:var(--raise);font:500 19px var(--ui);flex:none;display:grid;place-items:center}
 .ib[aria-pressed=true]{color:var(--cue)}
-#rec{color:var(--rec)}
+#rec{flex:none;width:62px;height:46px;border-radius:10px;border:1.5px solid var(--rec);color:var(--rec);font:700 15px var(--ui)}
 #rec.on{background:var(--rec);color:#fff}
-#time{flex:1;min-width:0;text-align:center;font:500 15px var(--ui);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+#time{flex:1;min-width:0;text-align:center;font:500 13px var(--ui);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
 #play{flex:none;width:76px;height:46px;border-radius:10px;background:var(--cue);color:#1a1200;font:700 15px var(--ui)}
 #toast{position:fixed;left:50%;translate:-50% 0;bottom:calc(140px + env(safe-area-inset-bottom,0px));max-width:min(88vw,420px);background:var(--fg);color:var(--bg);padding:10px 14px;border-radius:8px;font-size:14px;z-index:9;text-align:center}
-#saved{position:fixed;inset:0;background:#000c;z-index:8;display:grid;place-items:center;padding:16px}
-#saved div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px;width:min(100%,340px)}
-#saved p{margin:0;color:var(--muted);font-size:15px}
-#saved button{padding:13px;border-radius:10px;font:700 15px var(--ui);background:var(--raise)}
-#saved #save{background:var(--cue);color:#1a1200}
+.player{flex:1;min-height:0;display:flex}
+#rvVideo{flex:1;min-width:0;width:100%;height:100%;object-fit:contain;background:#000;border-radius:10px}
+#dl{display:block;text-align:center;text-decoration:none;font:700 16px var(--ui);color:var(--fg);background:var(--raise);border-radius:10px;padding:14px}
+#takeList{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:8px}
+.take{display:flex;justify-content:space-between;align-items:baseline;gap:12px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-size:16px}
+.take span:last-child{color:var(--muted);font:500 13px var(--ui);white-space:nowrap;font-variant-numeric:tabular-nums}
+.note{color:var(--muted);font-size:14px;line-height:1.45;margin:0;padding-block:12px 16px}
 @media (min-width:700px){#words{font-size:44px}}
 </style>
 
-<section id="edit" class="gutter">
+<section id="edit" class="view gutter">
   <div class="top">
     <h1>Pocket <i>Teleprompter</i></h1>
     <div class="stats" id="stats" aria-live="polite"></div>
@@ -92,6 +94,7 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
     <div class="toggles">
       <button class="chip" id="tCount" aria-pressed="true">3s countdown</button>
       <button class="chip" id="tMirror" aria-pressed="false">Mirror text</button>
+      <button class="chip" id="takesBtn" hidden></button>
       <button class="chip ghost" id="clear">Clear</button>
     </div>
     <button id="start">Start prompter</button>
@@ -118,18 +121,31 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
       <button class="ib" id="camBtn" aria-label="Camera" aria-pressed="false" hidden>
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10l6-3v10l-6-3z"/></svg>
       </button>
-      <button class="ib" id="rec" aria-label="Record" hidden>●</button>
+      <button id="rec" hidden>Rec</button>
       <span id="time"></span>
       <button id="play">Play</button>
     </div>
   </div>
 </section>
 <div id="toast" hidden role="status"></div>
-<div id="saved" hidden><div>
-  <p id="savedMsg"></p>
-  <button id="save">Save video</button>
-  <button id="discard">Discard</button>
-</div></div>
+<section id="review" class="view gutter" hidden>
+  <div class="top"><h1>Your <i>take</i></h1><div class="stats" id="rvMeta"></div></div>
+  <div class="player"><video id="rvVideo" controls playsinline></video></div>
+  <div class="dock">
+    <button id="save">Save video</button>
+    <a id="dl" download>Download to Files</a>
+    <div class="toggles">
+      <button class="chip" id="again">Record another</button>
+      <button class="chip" id="allTakes">All takes</button>
+      <button class="chip ghost" id="del">Delete</button>
+    </div>
+  </div>
+</section>
+<section id="takes" class="view gutter" hidden>
+  <div class="top"><h1>Takes</h1><button class="chip" id="takesBack">Back to script</button></div>
+  <div id="takeList"></div>
+  <p class="note">Takes are kept in this browser on this phone. Save the ones you want to Photos or Files, then delete them here to free up space.</p>
+</section>
 
 <script>
 (() => {
@@ -212,7 +228,7 @@ function tick(t){
   if (Math.abs(sc.scrollTop - pos) > 3) pos = sc.scrollTop;   // the reader dragged the text
   pos += pxPerSec() * dt;
   const max = maxScroll();
-  if (pos >= max){ sc.scrollTop = max; pause(); status(); return }
+  if (pos >= max){ sc.scrollTop = max; pause(); status(); if (recording()) toast('End of script. Tap Stop when you have finished.'); return }
   sc.scrollTop = pos; status();
   requestAnimationFrame(tick);
 }
@@ -239,13 +255,17 @@ function pause(){
 }
 const toggle = () => (playing || countTimer) ? pause() : play();
 
-$('start').onclick = () => {
-  if (!wordCount()) { toast('Add a script first.'); return }
+function show(id){
+  for (const v of ['edit', 'prompt', 'review', 'takes']) $(v).hidden = v !== id;
+  if (id !== 'review') $('rvVideo').pause();
+}
+function openPrompt(){
+  if (!wordCount()) { show('edit'); toast('Add a script first.'); return false }
   words.textContent = S.script.trim();
-  $('edit').hidden = true; $('prompt').hidden = false;
-  paintLive(); sc.scrollTop = 0; status();
-};
-$('back').onclick = () => { pause(); camOff(); $('prompt').hidden = true; $('edit').hidden = false };
+  show('prompt'); paintLive(); sc.scrollTop = 0; status(); return true;
+}
+$('start').onclick = openPrompt;
+$('back').onclick = () => { pause(); if (recording()) recorder.stop(); else { camOff(); show('edit') } };
 $('restart').onclick = () => { pause(); sc.scrollTop = 0; status() };
 $('play').onclick = toggle;
 $('count').onclick = pause;
@@ -265,7 +285,7 @@ function resize(d){
 $('smaller').onclick = () => resize(-2);
 $('larger').onclick = () => resize(2);
 addEventListener('resize', status);
-document.addEventListener('visibilitychange', () => { if (document.hidden) pause() });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { pause(); if (recording()) recorder.stop() } });
 addEventListener('keydown', e => {
   if ($('prompt').hidden) return;
   if (e.code === 'Space') { e.preventDefault(); toggle() }
@@ -277,10 +297,50 @@ addEventListener('keydown', e => {
 let toastTimer;
 function toast(msg){ const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true }, 3500) }
 
-/* ---------- Camera + recording (only in the self-hosted copy, where the browser allows the camera) ---------- */
-const cam = $('cam'); let stream = null, recorder = null, chunks = [], clip = null;
+/* ---------- Camera, recording and takes (only in the self-hosted copy, where the browser allows the camera) ---------- */
+const cam = $('cam'); let stream = null, recorder = null, recTimer = null, cur = null, curUrl = null;
 const canFilm = !!(window.TP_STANDALONE && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
 $('camBtn').hidden = !canFilm;
+function recording(){ return !!recorder && recorder.state !== 'inactive' }
+const mb = n => n < 1048576 * 1000 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB';
+
+// Takes are written to on-device storage second by second while recording, so length is bounded by
+// free storage rather than memory, and a take survives a reload. Memory is the fallback if storage refuses.
+let dbp = null; const mem = {chunks:{}, takes:[]};
+function idb(){
+  return dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('tp', 1);
+    r.onupgradeneeded = () => { r.result.createObjectStore('takes', {keyPath:'id'}); r.result.createObjectStore('chunks', {autoIncrement:true}).createIndex('take', 'take') };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  }));
+}
+async function tx(stores, mode, fn){
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const t = d.transaction(stores, mode); let out;
+    t.oncomplete = () => res(out); t.onerror = t.onabort = () => rej(t.error);
+    const r = fn(t); if (r) r.onsuccess = () => { out = r.result };
+  });
+}
+const putChunk = (take, blob) => tx('chunks', 'readwrite', t => { t.objectStore('chunks').add({take, blob}) })
+  .catch(() => { (mem.chunks[take] = mem.chunks[take] || []).push(blob) });
+async function chunksOf(id){
+  let rows = []; try{ rows = await tx('chunks', 'readonly', t => t.objectStore('chunks').index('take').getAll(id)) }catch{}
+  return rows.map(r => r.blob).concat(mem.chunks[id] || []);
+}
+async function allTakes(){
+  let rows = []; try{ rows = await tx('takes', 'readonly', t => t.objectStore('takes').getAll()) }catch{}
+  return rows.concat(mem.takes).sort((a, b) => b.id - a.id);
+}
+async function deleteTake(id){
+  delete mem.chunks[id]; mem.takes = mem.takes.filter(t => t.id !== id);
+  try{ await tx(['takes', 'chunks'], 'readwrite', t => {
+    t.objectStore('takes').delete(id);
+    const c = t.objectStore('chunks').index('take').openKeyCursor(IDBKeyRange.only(id));
+    c.onsuccess = () => { const k = c.result; if (k) { t.objectStore('chunks').delete(k.primaryKey); k.continue() } };
+  }) }catch{}
+}
+
 async function camOn(){
   try{
     stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:{ideal:1920}, height:{ideal:1080}}, audio:true});
@@ -291,42 +351,83 @@ async function camOn(){
   }
 }
 function camOff(){
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
   if (stream) stream.getTracks().forEach(t => t.stop());
   stream = null; cam.srcObject = null; cam.hidden = true; stage.classList.remove('film');
   $('camBtn').setAttribute('aria-pressed', 'false'); $('rec').hidden = true;
 }
-$('camBtn').onclick = () => stream ? camOff() : camOn();
+$('camBtn').onclick = () => { if (recording()) return; stream ? camOff() : camOn() };
+
 $('rec').onclick = () => {
-  if (recorder && recorder.state !== 'inactive') { recorder.stop(); pause(); return }
+  if (recording()) { recorder.stop(); return }          // Stop ends the take and opens it for review
+  if (!stream) return;
   const type = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  try{ recorder = new MediaRecorder(stream, type ? {mimeType:type} : {}) }catch{ toast('This browser cannot record video.'); return }
-  chunks = [];
-  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data) };
-  recorder.onstop = () => {
-    $('rec').classList.remove('on'); $('recdot').hidden = true;
-    const mime = recorder.mimeType || type || 'video/webm';
-    const blob = new Blob(chunks, {type:mime});
-    if (!blob.size) return;
-    const name = 'take-' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + (mime.includes('mp4') ? '.mp4' : '.webm');
-    clip = {blob, name, mime};
-    $('savedMsg').textContent = `Take recorded (${(blob.size / 1048576).toFixed(1)} MB).`;
-    $('saved').hidden = false;
+  let r;
+  try{ r = new MediaRecorder(stream, Object.assign({videoBitsPerSecond:8e6}, type ? {mimeType:type} : {})) }catch{ toast('This browser cannot record video.'); return }
+  recorder = r;
+  const id = Date.now(); let size = 0, writes = Promise.resolve();
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+  r.ondataavailable = e => { if (!e.data.size) return; const b = e.data; size += b.size; writes = writes.then(() => putChunk(id, b)) };
+  r.onstop = async () => {
+    clearInterval(recTimer); pause();
+    $('rec').classList.remove('on'); $('rec').textContent = 'Rec'; $('recdot').hidden = true;
+    const mime = (r.mimeType || type || 'video/webm').split(';')[0];
+    const take = {id, mime, size, dur:(Date.now() - id) / 1000,
+      name:'take-' + new Date(id).toISOString().slice(0, 19).replace(/[:T]/g, '-') + (mime.includes('mp4') ? '.mp4' : '.webm')};
+    camOff();
+    await writes;
+    if (!size) { show('edit'); toast('Nothing was recorded. Try again.'); return }
+    take.size = size;
+    try{ await tx('takes', 'readwrite', t => { t.objectStore('takes').put(take) }) }catch{ mem.takes.push(take) }
+    refreshTakes(); openReview(take);
   };
-  recorder.start(1000);
-  $('rec').classList.add('on'); $('recdot').hidden = false;
+  r.start(1000);
+  $('rec').classList.add('on'); $('rec').textContent = 'Stop';
+  $('recdot').textContent = 'REC 0:00'; $('recdot').hidden = false;
+  recTimer = setInterval(() => { $('recdot').textContent = 'REC ' + fmt((Date.now() - id) / 1000) }, 500);
   play();
 };
-$('save').onclick = async () => {
-  if (!clip) return;
-  const file = new File([clip.blob], clip.name, {type:clip.mime.split(';')[0]});
-  try{
-    if (navigator.canShare && navigator.canShare({files:[file]})) { await navigator.share({files:[file]}); }
-    else { const a = document.createElement('a'); a.href = URL.createObjectURL(clip.blob); a.download = clip.name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 60000) }
-    $('saved').hidden = true; clip = null;
-  }catch(err){ if (!err || err.name !== 'AbortError') toast('Could not save the video. Try again.') }
+
+/* ---------- Review and takes ---------- */
+async function openReview(take){
+  const blob = new Blob(await chunksOf(take.id), {type:take.mime});
+  if (curUrl) URL.revokeObjectURL(curUrl);
+  curUrl = URL.createObjectURL(blob);
+  cur = {take, file:new File([blob], take.name, {type:take.mime})};
+  $('rvVideo').src = curUrl; $('dl').href = curUrl; $('dl').download = take.name;
+  $('rvMeta').textContent = fmt(take.dur) + ' · ' + mb(take.size);
+  $('save').hidden = !(navigator.canShare && navigator.canShare({files:[cur.file]}));
+  $('del').textContent = 'Delete'; delArmed = 0;
+  show('review');
+}
+$('save').onclick = () => {
+  if (cur) navigator.share({files:[cur.file]}).catch(err => { if (!err || err.name !== 'AbortError') toast('Sharing failed. Use Download to Files instead.') });
 };
-$('discard').onclick = () => { $('saved').hidden = true; clip = null };
+$('again').onclick = () => { if (openPrompt()) camOn() };
+let delArmed = 0;
+$('del').onclick = async e => {
+  if (Date.now() - delArmed > 3000) { delArmed = Date.now(); e.target.textContent = 'Tap again to delete'; setTimeout(() => { e.target.textContent = 'Delete' }, 3000); return }
+  await deleteTake(cur.take.id); cur = null;
+  (await refreshTakes()).length ? openTakes() : show('edit');
+};
+async function refreshTakes(){
+  const list = canFilm ? await allTakes() : [];
+  $('takesBtn').hidden = !list.length; $('takesBtn').textContent = 'Takes (' + list.length + ')';
+  return list;
+}
+async function openTakes(){
+  const list = await refreshTakes(), box = $('takeList'); box.textContent = '';
+  for (const t of list){
+    const b = document.createElement('button'), a = document.createElement('span'), m = document.createElement('span');
+    b.className = 'take';
+    a.textContent = new Date(t.id).toLocaleString([], {dateStyle:'medium', timeStyle:'short'});
+    m.textContent = fmt(t.dur) + ' · ' + mb(t.size);
+    b.append(a, m); b.onclick = () => openReview(t); box.append(b);
+  }
+  show('takes');
+}
+$('takesBtn').onclick = $('allTakes').onclick = openTakes;
+$('takesBack').onclick = () => show('edit');
+refreshTakes();
 
 paintEdit(); paintLive();
 })();
