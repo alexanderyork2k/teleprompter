@@ -96,6 +96,7 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
     <div class="toggles">
       <button class="chip" id="tCount" aria-pressed="true">3s countdown</button>
       <button class="chip" id="tMirror" aria-pressed="false">Mirror text</button>
+      <button class="chip" id="tMirrorRec" aria-pressed="true" hidden>Mirror video</button>
       <button class="chip" id="takesBtn" hidden></button>
       <button class="chip ghost" id="clear">Clear</button>
     </div>
@@ -175,7 +176,8 @@ const S = {
   wpm: store.get('wpm', 150),
   size: store.get('size', 34),
   count: store.get('count', true),
-  mirror: store.get('mirror', false)
+  mirror: store.get('mirror', false),
+  mirrorRec: store.get('mirrorRec', true)
 };
 
 const script = $('script'), words = $('words'), sc = $('scroller'), stage = $('stage');
@@ -187,6 +189,7 @@ function paintEdit(){
   $('size').value = S.size; $('sizeOut').textContent = S.size + ' px';
   $('tCount').setAttribute('aria-pressed', S.count);
   $('tMirror').setAttribute('aria-pressed', S.mirror);
+  $('tMirrorRec').setAttribute('aria-pressed', S.mirrorRec);
   const n = wordCount();
   $('stats').textContent = n ? `${n} words · about ${fmt(n / S.wpm * 60)}` : 'No script yet';
 }
@@ -206,6 +209,7 @@ $('wpm').addEventListener('input', e => set('wpm', +e.target.value));
 $('size').addEventListener('input', e => set('size', +e.target.value));
 $('tCount').onclick = () => set('count', !S.count);
 $('tMirror').onclick = () => set('mirror', !S.mirror);
+$('tMirrorRec').onclick = () => set('mirrorRec', !S.mirrorRec);
 let clearArmed = 0;
 $('clear').onclick = e => {
   if (Date.now() - clearArmed < 3000){ script.value = ''; set('script', ''); e.target.textContent = 'Clear'; clearArmed = 0; script.focus() }
@@ -302,7 +306,7 @@ function toast(msg){ const t = $('toast'); t.textContent = msg; t.hidden = false
 /* ---------- Camera, recording and takes (only in the self-hosted copy, where the browser allows the camera) ---------- */
 const cam = $('cam'); let stream = null, recorder = null, recTimer = null, cur = null, curUrl = null;
 const canFilm = !!(window.TP_STANDALONE && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-$('camBtn').hidden = !canFilm;
+$('camBtn').hidden = $('tMirrorRec').hidden = !canFilm;
 function recording(){ return !!recorder && recorder.state !== 'inactive' }
 const mb = n => n < 1048576 * 1000 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB';
 
@@ -363,14 +367,29 @@ $('rec').onclick = () => {
   if (recording()) { recorder.stop(); return }          // Stop ends the take and opens it for review
   if (!stream) return;
   const type = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
+  // Mirror video: record a flipped copy of the camera so the file matches the selfie preview.
+  let src = stream, stopMirror = () => {};
+  if (S.mirrorRec && HTMLCanvasElement.prototype.captureStream && cam.videoWidth){
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d'); let live = true;
+    const draw = () => {
+      if (!live) return;
+      if (cv.width !== cam.videoWidth || cv.height !== cam.videoHeight) { cv.width = cam.videoWidth; cv.height = cam.videoHeight }
+      cx.setTransform(-1, 0, 0, 1, cv.width, 0); cx.drawImage(cam, 0, 0, cv.width, cv.height);
+      cam.requestVideoFrameCallback ? cam.requestVideoFrameCallback(draw) : requestAnimationFrame(draw);
+    };
+    draw();
+    const cs = cv.captureStream(30);
+    src = new MediaStream([...cs.getVideoTracks(), ...stream.getAudioTracks()]);
+    stopMirror = () => { live = false; cs.getTracks().forEach(t => t.stop()) };
+  }
   let r;
-  try{ r = new MediaRecorder(stream, Object.assign({videoBitsPerSecond:8e6}, type ? {mimeType:type} : {})) }catch{ toast('This browser cannot record video.'); return }
+  try{ r = new MediaRecorder(src, Object.assign({videoBitsPerSecond:8e6}, type ? {mimeType:type} : {})) }catch{ stopMirror(); toast('This browser cannot record video.'); return }
   recorder = r;
   const id = Date.now(); let size = 0, writes = Promise.resolve();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   r.ondataavailable = e => { if (!e.data.size) return; const b = e.data; size += b.size; writes = writes.then(() => putChunk(id, b)) };
   r.onstop = async () => {
-    clearInterval(recTimer); pause();
+    clearInterval(recTimer); pause(); stopMirror();
     $('rec').classList.remove('on'); $('rec').textContent = 'Rec'; $('recdot').hidden = true;
     const mime = (r.mimeType || type || 'video/webm').split(';')[0];
     const take = {id, mime, size, dur:(Date.now() - id) / 1000,
