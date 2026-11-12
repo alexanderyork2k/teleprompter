@@ -368,10 +368,13 @@ $('rec').onclick = () => {
   // Mirror video: record a flipped copy of the camera so the file matches the selfie preview.
   let src = stream, stopMirror = () => {};
   if (S.mirrorRec && HTMLCanvasElement.prototype.captureStream && cam.videoWidth){
-    const cv = document.createElement('canvas'), cx = cv.getContext('2d'); let live = true;
+    const cv = document.createElement('canvas'), cx = cv.getContext('2d', {alpha:false, desynchronized:true}); let live = true;
     const draw = () => {
       if (!live) return;
-      if (cv.width !== cam.videoWidth || cv.height !== cam.videoHeight) { cv.width = cam.videoWidth; cv.height = cam.videoHeight }
+      // Flipping every frame is heavy on a phone, so the mirrored copy is capped at 720p to keep it smooth.
+      const k = Math.min(1, 1280 / Math.max(cam.videoWidth, cam.videoHeight));
+      const w = Math.round(cam.videoWidth * k / 2) * 2, h = Math.round(cam.videoHeight * k / 2) * 2;
+      if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h }
       cx.setTransform(-1, 0, 0, 1, cv.width, 0); cx.drawImage(cam, 0, 0, cv.width, cv.height);
       cam.requestVideoFrameCallback ? cam.requestVideoFrameCallback(draw) : requestAnimationFrame(draw);
     };
@@ -381,7 +384,7 @@ $('rec').onclick = () => {
     stopMirror = () => { live = false; cs.getTracks().forEach(t => t.stop()) };
   }
   let r;
-  try{ r = new MediaRecorder(src, Object.assign({videoBitsPerSecond:8e6}, type ? {mimeType:type} : {})) }catch{ stopMirror(); toast('This browser cannot record video.'); return }
+  try{ r = new MediaRecorder(src, Object.assign({videoBitsPerSecond:src === stream ? 8e6 : 5e6}, type ? {mimeType:type} : {})) }catch{ stopMirror(); toast('This browser cannot record video.'); return }
   recorder = r;
   const id = Date.now(); let size = 0, writes = Promise.resolve();
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
