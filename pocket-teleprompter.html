@@ -152,8 +152,9 @@ input[type=range]{width:100%;accent-color:var(--cue);height:28px;margin:0}
 <div id="toast" hidden role="status"></div>
 <section id="review" class="view gutter" hidden>
   <div class="top"><h1>Your <i>take</i></h1><div class="stats" id="rvMeta"></div></div>
-  <div class="player"><video id="rvVideo" controls playsinline></video></div>
+  <div class="player"><video id="rvVideo" controls playsinline preload="metadata"></video></div>
   <div class="dock">
+    <p class="note" id="rvNote" hidden>This take is too long for your phone to preview, but the video is safely stored. Save it to Photos or download it to Files.</p>
     <button id="save">Save video</button>
     <a id="dl" download>Download to Files</a>
     <div class="toggles">
@@ -276,7 +277,7 @@ function play(){
 }
 function pause(){
   if (countTimer){ clearInterval(countTimer); countTimer = null; $('count').hidden = true }
-  playing = false; $('play').textContent = 'Play'; wake(false);
+  playing = false; $('play').textContent = 'Play'; if (!recording()) wake(false);
 }
 const toggle = () => (playing || countTimer) ? pause() : play();
 
@@ -328,9 +329,11 @@ const canFilm = !!(window.TP_STANDALONE && navigator.mediaDevices && navigator.m
 $('camBtn').hidden = $('tMirrorRec').hidden = !canFilm;
 function recording(){ return !!recorder && recorder.state !== 'inactive' }
 const mb = n => n < 1048576 * 1000 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB';
+const takeName = (id, mime) => 'take-' + new Date(id).toISOString().slice(0, 19).replace(/[:T]/g, '-') + (String(mime).includes('mp4') ? '.mp4' : '.webm');
 
-// Takes are written to on-device storage second by second while recording, so length is bounded by
-// free storage rather than memory, and a take survives a reload. Memory is the fallback if storage refuses.
+/* Storage. Every second of video is written to on-device storage as it is recorded, and the take is listed
+   from the moment recording starts. If Safari crashes, the phone locks or the page is closed mid-take,
+   everything up to that second is still there and is listed under Takes as a recovered take. */
 let dbp = null; const mem = {chunks:{}, takes:[]};
 function idb(){
   return dbp || (dbp = new Promise((res, rej) => {
@@ -347,11 +350,17 @@ async function tx(stores, mode, fn){
     const r = fn(t); if (r) r.onsuccess = () => { out = r.result };
   });
 }
-const putChunk = (take, blob) => tx('chunks', 'readwrite', t => { t.objectStore('chunks').add({take, blob}) })
-  .catch(() => { (mem.chunks[take] = mem.chunks[take] || []).push(blob) });
+const putTake = take => tx('takes', 'readwrite', t => { t.objectStore('takes').put(take) });
+// Walk a take's pieces one at a time with a cursor; loading them all in one request can fail on long takes.
+function eachChunk(range, fn){
+  return tx('chunks', 'readonly', t => {
+    const c = t.objectStore('chunks').index('take').openCursor(range);
+    c.onsuccess = () => { const k = c.result; if (k) { fn(k.value); k.continue() } };
+  });
+}
 async function chunksOf(id){
-  let rows = []; try{ rows = await tx('chunks', 'readonly', t => t.objectStore('chunks').index('take').getAll(id)) }catch{}
-  return rows.map(r => r.blob).concat(mem.chunks[id] || []);
+  if (mem.chunks[id]) return mem.chunks[id];
+  const out = []; await eachChunk(IDBKeyRange.only(id), v => out.push(v.blob)); return out;
 }
 async function allTakes(){
   let rows = []; try{ rows = await tx('takes', 'readonly', t => t.objectStore('takes').getAll()) }catch{}
@@ -364,6 +373,36 @@ async function deleteTake(id){
     const c = t.objectStore('chunks').index('take').openKeyCursor(IDBKeyRange.only(id));
     c.onsuccess = () => { const k = c.result; if (k) { t.objectStore('chunks').delete(k.primaryKey); k.continue() } };
   }) }catch{}
+}
+// On load: rebuild any take that never finished (crash, phone locked, page closed) from the pieces on disk.
+// Each piece is stamped with when it was saved, which gives the take's length.
+async function recoverTakes(){
+  try{
+    const found = {};
+    await eachChunk(null, v => {
+      const f = found[v.take] || (found[v.take] = {n:0, size:0, mime:'', last:0});
+      f.n++; f.size += v.blob.size; f.last = Math.max(f.last, v.at || 0); if (!f.mime && v.blob.type) f.mime = v.blob.type.split(';')[0];
+    });
+    const takes = await tx('takes', 'readonly', t => t.objectStore('takes').getAll());
+    const byId = Object.fromEntries(takes.map(t => [t.id, t]));
+    let fixed = 0;
+    for (const id in found){
+      const t = byId[id], f = found[id];
+      if (t && t.state === 'done') continue;
+      const mime = (t && t.mime) || f.mime || 'video/mp4';
+      await putTake({id:+id, mime, name:takeName(+id, mime), size:f.size, dur:Math.max(f.last ? (f.last - id) / 1000 : f.n, (t && t.dur) || 0), state:'done', recovered:true});
+      fixed++;
+    }
+    for (const t of takes) if (!found[t.id]) await deleteTake(t.id);   // a take with no video in it
+    if (fixed) toast(fixed === 1 ? 'Recovered 1 unfinished take. Find it under Takes.' : `Recovered ${fixed} unfinished takes. Find them under Takes.`);
+  }catch{}
+}
+
+// A keyframe every second makes the recorder hand over video every second, so a crash loses at most a moment.
+// Recording size: about 45 MB a minute at 1080p, 30 MB a minute for the mirrored 720p copy.
+const RATE = {plain:6e6, mirror:4e6};
+async function freeBytes(){
+  try{ const e = await navigator.storage.estimate(); return e.quota ? e.quota - e.usage : Infinity }catch{ return Infinity }
 }
 
 async function camOn(){
@@ -382,9 +421,14 @@ function camOff(){
 }
 $('camBtn').onclick = () => { if (recording()) return; stream ? camOff() : camOn() };
 
-$('rec').onclick = () => {
+let starting = false;
+$('rec').onclick = async () => {
   if (recording()) { recorder.stop(); return }          // Stop ends the take and opens it for review
-  if (!stream) return;
+  if (!stream || starting) return;
+  starting = true;
+  try{ await startRecording() } finally { starting = false }
+};
+async function startRecording(){
   const type = ['video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'].find(t => MediaRecorder.isTypeSupported(t)) || '';
   // Mirror video: record a flipped copy of the camera so the file matches the selfie preview.
   let src = stream, stopMirror = () => {};
@@ -404,46 +448,75 @@ $('rec').onclick = () => {
     src = new MediaStream([...cs.getVideoTracks(), ...stream.getAudioTracks()]);
     stopMirror = () => { live = false; cs.getTracks().forEach(t => t.stop()) };
   }
+  const bps = src === stream ? RATE.plain : RATE.mirror, perSec = bps / 8 + 16000;
   let r;
-  try{ r = new MediaRecorder(src, Object.assign({videoBitsPerSecond:src === stream ? 8e6 : 5e6}, type ? {mimeType:type} : {})) }catch{ stopMirror(); toast('This browser cannot record video.'); return }
-  recorder = r;
-  const id = Date.now(); let size = 0, writes = Promise.resolve();
+  try{ r = new MediaRecorder(src, Object.assign({videoBitsPerSecond:bps, audioBitsPerSecond:128000, videoKeyFrameIntervalDuration:1000}, type ? {mimeType:type} : {})) }catch{ stopMirror(); toast('This browser cannot record video.'); return }
+
+  // Where the take goes: on-device storage, or memory only if Safari refuses storage (private browsing).
+  const id = Date.now(), mime = (r.mimeType || type || 'video/webm').split(';')[0];
+  const take = {id, mime, name:takeName(id, mime), size:0, dur:0, state:'recording'};
+  let onDisk = true;
+  try{ await putTake(take) }catch{ onDisk = false; mem.chunks[id] = []; mem.takes.push(take) }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-  r.ondataavailable = e => { if (!e.data.size) return; const b = e.data; size += b.size; writes = writes.then(() => putChunk(id, b)) };
+  const free = await freeBytes();
+  if (!onDisk) toast('Private browsing is on, so this take is kept in memory only. Keep it short, or turn off Private browsing.');
+  else if (free < perSec * 120) { await deleteTake(id); stopMirror(); toast('Not enough storage to record. Free up space on your phone, or save and delete old takes.'); return }
+  else if (free < perSec * 900) toast(`Storage has room for about ${Math.floor(free / perSec / 60)} minutes of video.`);
+
+  recorder = r;
+  let size = 0, writes = Promise.resolve(), full = false, lastMeta = 0;
+  const fail = msg => { if (full) return; full = true; toast(msg); if (recording()) r.stop() };
+  r.ondataavailable = e => {
+    if (!e.data.size) return;
+    const b = e.data; size += b.size;
+    if (!onDisk) { mem.chunks[id].push(b); return }
+    writes = writes.then(() => tx('chunks', 'readwrite', t => { t.objectStore('chunks').add({take:id, blob:b, at:Date.now()}) }))
+      .catch(() => fail('Storage is full, so recording stopped. Everything up to this point is saved.'));
+    if (Date.now() - lastMeta > 5000) { lastMeta = Date.now(); writes = writes.then(() => putTake(Object.assign(take, {size, dur:(Date.now() - id) / 1000}))).catch(() => {}) }
+  };
   r.onstop = async () => {
-    clearInterval(recTimer); pause(); stopMirror();
+    clearInterval(recTimer); pause(); stopMirror(); wake(false);
     $('rec').classList.remove('on'); $('rec').textContent = 'Rec'; $('recdot').hidden = true;
-    const mime = (r.mimeType || type || 'video/webm').split(';')[0];
-    const take = {id, mime, size, dur:(Date.now() - id) / 1000,
-      name:'take-' + new Date(id).toISOString().slice(0, 19).replace(/[:T]/g, '-') + (mime.includes('mp4') ? '.mp4' : '.webm')};
     camOff();
     await writes;
-    if (!size) { show('edit'); toast('Nothing was recorded. Try again.'); return }
-    take.size = size;
-    try{ await tx('takes', 'readwrite', t => { t.objectStore('takes').put(take) }) }catch{ mem.takes.push(take) }
+    Object.assign(take, {size, dur:(Date.now() - id) / 1000, state:'done'});
+    if (!size) { await deleteTake(id); show('edit'); toast('Nothing was recorded. Try again.'); return }
+    if (onDisk) await putTake(take).catch(() => {});
     refreshTakes(); openReview(take);
   };
+  r.onerror = () => fail('Recording stopped because of a camera error. Everything up to this point is saved.');
   r.start(1000);
+  wake(true);
   $('rec').classList.add('on'); $('rec').textContent = 'Stop';
   $('recdot').textContent = 'REC 0:00'; $('recdot').hidden = false;
-  recTimer = setInterval(() => { $('recdot').textContent = 'REC ' + fmt((Date.now() - id) / 1000) }, 500);
+  let tick = 0;
+  recTimer = setInterval(async () => {
+    $('recdot').textContent = 'REC ' + fmt((Date.now() - id) / 1000);
+    if (onDisk && ++tick % 20 === 0 && await freeBytes() < perSec * 20) fail('Storage is almost full, so recording stopped. Everything up to this point is saved.');
+  }, 500);
   play();
-};
+}
 
 /* ---------- Review and takes ---------- */
 async function openReview(take){
-  const blob = new Blob(await chunksOf(take.id), {type:take.mime});
+  let parts = [];
+  try{ parts = await chunksOf(take.id) }catch{}
+  if (!parts.length) { toast('This take could not be opened. Close Safari fully, reopen the app and try again from Takes.'); return }
+  const blob = new Blob(parts, {type:take.mime});
   if (curUrl) URL.revokeObjectURL(curUrl);
   curUrl = URL.createObjectURL(blob);
   cur = {take, file:new File([blob], take.name, {type:take.mime})};
+  $('rvNote').hidden = true;
   $('rvVideo').src = curUrl; $('dl').href = curUrl; $('dl').download = take.name;
-  $('rvMeta').textContent = fmt(take.dur) + ' · ' + mb(take.size);
+  $('rvMeta').textContent = fmt(take.dur) + ' · ' + mb(blob.size) + (take.recovered ? ' · recovered' : '');
   $('save').hidden = !(navigator.canShare && navigator.canShare({files:[cur.file]}));
   $('del').textContent = 'Delete'; delArmed = 0;
   show('review');
 }
+// A very long take can be too big for the phone to preview. That does not affect the file: it can still be saved.
+$('rvVideo').addEventListener('error', () => { if (cur) $('rvNote').hidden = false });
 $('save').onclick = () => {
-  if (cur) navigator.share({files:[cur.file]}).catch(err => { if (!err || err.name !== 'AbortError') toast('Sharing failed. Use Download to Files instead.') });
+  if (cur) navigator.share({files:[cur.file]}).catch(err => { if (!err || err.name !== 'AbortError') toast('Sharing failed, often because the video is very large. Use Download to Files instead.') });
 };
 $('again').onclick = () => { if (openPrompt()) camOn() };
 let delArmed = 0;
@@ -462,7 +535,7 @@ async function openTakes(){
   for (const t of list){
     const b = document.createElement('button'), a = document.createElement('span'), m = document.createElement('span');
     b.className = 'take';
-    a.textContent = new Date(t.id).toLocaleString([], {dateStyle:'medium', timeStyle:'short'});
+    a.textContent = new Date(t.id).toLocaleString([], {dateStyle:'medium', timeStyle:'short'}) + (t.recovered ? ' · recovered' : '');
     m.textContent = fmt(t.dur) + ' · ' + mb(t.size);
     b.append(a, m); b.onclick = () => openReview(t); box.append(b);
   }
@@ -470,7 +543,7 @@ async function openTakes(){
 }
 $('takesBtn').onclick = $('allTakes').onclick = openTakes;
 $('takesBack').onclick = () => show('edit');
-refreshTakes();
+if (canFilm) recoverTakes().then(refreshTakes); else refreshTakes();
 
 paintEdit(); paintLive();
 })();
